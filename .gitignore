@@ -1,0 +1,9 @@
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.map
+!firmware/*.bin
+
+# macOS files
+.DS_Store
