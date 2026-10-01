@@ -105,6 +105,20 @@ public:
     setupHueClusters();
   }
 
+  uint16_t getRawColorX() {
+    esp_zb_zcl_attr_t *attr = esp_zb_zcl_get_attribute(
+      _endpoint, ESP_ZB_ZCL_CLUSTER_ID_COLOR_CONTROL, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, ESP_ZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_X_ID
+    );
+    return attr ? *(uint16_t *)(attr->data_p) : 0;
+  }
+
+  uint16_t getRawColorY() {
+    esp_zb_zcl_attr_t *attr = esp_zb_zcl_get_attribute(
+      _endpoint, ESP_ZB_ZCL_CLUSTER_ID_COLOR_CONTROL, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, ESP_ZB_ZCL_ATTR_COLOR_CONTROL_CURRENT_Y_ID
+    );
+    return attr ? *(uint16_t *)(attr->data_p) : 0;
+  }
+
 private:
   void setupHueClusters() {
     // 1. On/Off Cluster (0x0006)
@@ -152,23 +166,107 @@ private:
 // Zigbee Color Dimmable Light instance on Endpoint 11
 HueColorDimmableLight zbLight(ZIGBEE_LIGHT_ENDPOINT);
 
+// Forward declarations
+void applyLightState(bool state, uint8_t level, uint8_t r, uint8_t g, uint8_t b);
+
+// Converts CIE 1931 (X, Y) normalized coordinates (0..65535) into sRGB chromaticity (0..255)
+// using D65 reference illuminant and component-maximum normalization to prevent gamut clipping distortion.
+void xyToRgb(uint16_t raw_x, uint16_t raw_y, uint8_t &outR, uint8_t &outG, uint8_t &outB) {
+  if (raw_y == 0) {
+    outR = outG = outB = 255;
+    return;
+  }
+  float x = (float)raw_x / 65535.0f;
+  float y = (float)raw_y / 65535.0f;
+  float z = 1.0f - x - y;
+
+  float Y = 1.0f;
+  float X = (Y / y) * x;
+  float Z = (Y / y) * z;
+
+  // sRGB D65 matrix transformation
+  float r = (X * 3.2406f) - (Y * 1.5372f) - (Z * 0.4986f);
+  float g = -(X * 0.9689f) + (Y * 1.8758f) + (Z * 0.0415f);
+  float b = (X * 0.0557f) - (Y * 0.2040f) + (Z * 1.0570f);
+
+  // Gamma correction (sRGB curve)
+  auto gammaCorrect = [](float v) -> float {
+    if (v <= 0.0f) return 0.0f;
+    if (v <= 0.0031308f) return 12.92f * v;
+    return 1.055f * powf(v, 1.0f / 2.4f) - 0.055f;
+  };
+
+  r = gammaCorrect(r);
+  g = gammaCorrect(g);
+  b = gammaCorrect(b);
+
+  // Component-max normalization: maintains pure chromaticity across wide gamuts without clipping
+  float maxVal = fmaxf(r, fmaxf(g, b));
+  if (maxVal > 1.0f) {
+    r /= maxVal;
+    g /= maxVal;
+    b /= maxVal;
+  }
+
+  outR = (uint8_t)constrain((int)(r * 255.0f + 0.5f), 0, 255);
+  outG = (uint8_t)constrain((int)(g * 255.0f + 0.5f), 0, 255);
+  outB = (uint8_t)constrain((int)(b * 255.0f + 0.5f), 0, 255);
+}
+
+// Converts Color Temperature in Mireds (153 = 6500K Cool White .. 500 = 2000K Warm Candle) to RGB
+void miredsToRgb(uint16_t mireds, uint8_t &outR, uint8_t &outG, uint8_t &outB) {
+  if (mireds == 0) {
+    outR = outG = outB = 255;
+    return;
+  }
+  float ctCentiKelvin = 10000.0f / (float)mireds;
+  float r, g, b;
+
+  // Red
+  if (ctCentiKelvin <= 66.0f) {
+    r = 255.0f;
+  } else {
+    r = 329.698727446f * powf(ctCentiKelvin - 60.0f, -0.1332047592f);
+  }
+
+  // Green
+  if (ctCentiKelvin <= 66.0f) {
+    g = 99.4708025861f * logf(ctCentiKelvin) - 161.1195681661f;
+  } else {
+    g = 288.1221695283f * powf(ctCentiKelvin - 60.0f, -0.0755148492f);
+  }
+
+  // Blue
+  if (ctCentiKelvin >= 66.0f) {
+    b = 255.0f;
+  } else if (ctCentiKelvin <= 19.0f) {
+    b = 0.0f;
+  } else {
+    b = 138.5177312231f * logf(ctCentiKelvin - 10.0f) - 305.0447927307f;
+  }
+
+  outR = (uint8_t)constrain((int)(r + 0.5f), 0, 255);
+  outG = (uint8_t)constrain((int)(g + 0.5f), 0, 255);
+  outB = (uint8_t)constrain((int)(b + 0.5f), 0, 255);
+}
+
 // LED helper functions for status feedback
 void setStatusLeds(bool blueLedOn, uint8_t r, uint8_t g, uint8_t b) {
   digitalWrite(BLUE_LED_PIN, blueLedOn ? HIGH : LOW);
   if (r > 0 || g > 0 || b > 0) {
     digitalWrite(RGB_LED_PWR_PIN, HIGH);
   }
-  rgbLedWrite(RGB_LED_DATA_PIN, r, g, b);
+  rgbLedWriteOrdered(RGB_LED_DATA_PIN, LED_COLOR_ORDER_GRB, r, g, b);
 }
 
 void turnStatusLedsOff() {
   digitalWrite(BLUE_LED_PIN, LOW);
-  rgbLedWrite(RGB_LED_DATA_PIN, 0, 0, 0);
+  rgbLedWriteOrdered(RGB_LED_DATA_PIN, LED_COLOR_ORDER_GRB, 0, 0, 0);
   digitalWrite(RGB_LED_PWR_PIN, LOW);
 }
 
 // Applies the current lamp state to the physical outputs:
-// 1. WS2812 RGB LED (scalable brightness and color)
+// 1. WS2812 RGB LED (scalable brightness and true color)
 // 2. Grove connector pins (GPIO 1 & GPIO 2 energized on ON, de-energized on OFF)
 void applyLightState(bool state, uint8_t level, uint8_t r = 255, uint8_t g = 255, uint8_t b = 255) {
   lightState = state;
@@ -187,9 +285,9 @@ void applyLightState(bool state, uint8_t level, uint8_t r = 255, uint8_t g = 255
     uint32_t scaledR = ((uint32_t)r * level) / 255;
     uint32_t scaledG = ((uint32_t)g * level) / 255;
     uint32_t scaledB = ((uint32_t)b * level) / 255;
-    rgbLedWrite(RGB_LED_DATA_PIN, (uint8_t)scaledR, (uint8_t)scaledG, (uint8_t)scaledB);
+    rgbLedWriteOrdered(RGB_LED_DATA_PIN, LED_COLOR_ORDER_GRB, (uint8_t)scaledR, (uint8_t)scaledG, (uint8_t)scaledB);
   } else {
-    rgbLedWrite(RGB_LED_DATA_PIN, 0, 0, 0);
+    rgbLedWriteOrdered(RGB_LED_DATA_PIN, LED_COLOR_ORDER_GRB, 0, 0, 0);
     digitalWrite(RGB_LED_PWR_PIN, LOW); // Turn off power gate for zero standby power
   }
 
@@ -197,9 +295,38 @@ void applyLightState(bool state, uint8_t level, uint8_t r = 255, uint8_t g = 255
                 state ? "ON" : "OFF", level, r, g, b, state ? "HIGH (3.3V)" : "LOW (0V)");
 }
 
-// Callback invoked when light RGB state changes via Zigbee (Hue App)
+// Callback invoked when light RGB state changes via Zigbee
 void onLightChangeRgbCb(bool state, uint8_t r, uint8_t g, uint8_t b, uint8_t level) {
-  Serial.printf("[Zigbee Light] RGB update received -> State: %d, RGB: (%u,%u,%u), Level: %u\n", state, r, g, b, level);
+  // If in XY mode, decode directly from the raw ZCL attributes to prevent gamut clipping distortion
+  uint8_t activeMode = zbLight.getLightColorMode();
+  uint8_t finalR = r, finalG = g, finalB = b;
+  if (activeMode == ZIGBEE_COLOR_MODE_CURRENT_X_Y) {
+    uint16_t rawX = zbLight.getRawColorX();
+    uint16_t rawY = zbLight.getRawColorY();
+    if (rawX > 0 || rawY > 0) {
+      xyToRgb(rawX, rawY, finalR, finalG, finalB);
+      Serial.printf("[Zigbee Light] Decoded XY (0x%04X, 0x%04X) -> RGB: (%u,%u,%u)\n", rawX, rawY, finalR, finalG, finalB);
+    }
+  }
+
+  if (currentState == STATE_OPERATIONAL) {
+    applyLightState(state, level, finalR, finalG, finalB);
+  } else {
+    lightState = state;
+    lightLevel = level;
+    lightR = finalR;
+    lightG = finalG;
+    lightB = finalB;
+  }
+}
+
+// Callback invoked when Hue App changes Color Temperature (Warm / Cold white slider)
+void onLightChangeTempCb(bool state, uint8_t level, uint16_t color_temperature) {
+  uint8_t r = 255, g = 255, b = 255;
+  miredsToRgb(color_temperature, r, g, b);
+  Serial.printf("[Zigbee Light] CT update -> State: %d, Mireds: %u (%uK), RGB: (%u,%u,%u), Level: %u\n",
+                state, color_temperature, color_temperature > 0 ? (1000000 / color_temperature) : 6500, r, g, b, level);
+
   if (currentState == STATE_OPERATIONAL) {
     applyLightState(state, level, r, g, b);
   } else {
@@ -226,7 +353,7 @@ void onIdentifyCb(uint16_t time) {
   if (idBlink) {
     digitalWrite(BLUE_LED_PIN, HIGH);
     digitalWrite(RGB_LED_PWR_PIN, HIGH);
-    rgbLedWrite(RGB_LED_DATA_PIN, 255, 255, 255);
+    rgbLedWriteOrdered(RGB_LED_DATA_PIN, LED_COLOR_ORDER_GRB, 255, 255, 255);
   } else {
     turnStatusLedsOff();
   }
@@ -266,7 +393,7 @@ void setup() {
   pinMode(RGB_LED_PWR_PIN, OUTPUT);
   digitalWrite(RGB_LED_PWR_PIN, HIGH);
   delay(10);
-  rgbLedWrite(RGB_LED_DATA_PIN, 0, 0, 0);
+  rgbLedWriteOrdered(RGB_LED_DATA_PIN, LED_COLOR_ORDER_GRB, 0, 0, 0);
   digitalWrite(RGB_LED_PWR_PIN, LOW);
 
   pinMode(GROVE_PIN_1, OUTPUT);
@@ -289,7 +416,10 @@ void setup() {
   prefs.end();
 
   // Configure Zigbee Color Dimmable Light endpoint
+  zbLight.setLightColorCapabilities(ZIGBEE_COLOR_CAPABILITY_X_Y | ZIGBEE_COLOR_CAPABILITY_COLOR_TEMP);
+  zbLight.setLightColorTemperatureRange(153, 500); // 6500K (153 mireds) to 2000K (500 mireds)
   zbLight.onLightChangeRgb(onLightChangeRgbCb);
+  zbLight.onLightChangeTemp(onLightChangeTempCb);
   zbLight.onIdentify(onIdentifyCb);
   // Setting GLEDOPTO manufacturer & model, universally recognized by Philips Hue Bridge
   zbLight.setManufacturerAndModel("GLEDOPTO", "GL-C-008P");
