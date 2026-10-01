@@ -129,6 +129,21 @@ Como o Philips Hue Bridge não permite parear extensores genéricos diretamente,
 5. O Hue Bridge encontrará o dispositivo como uma lâmpada colorida dimerizável.
 6. O M5NanoC6 confirmará com azul fixo (2s) e verde (3s). Pronto! Ele já está roteando e expandindo sua rede Zigbee.
 
+### 🔥 Binários Pré-compilados (v1.0.0)
+Disponíveis na pasta [`firmware/`](./firmware/):
+| Arquivo | Endereço (Offset) | Descrição |
+| :--- | :--- | :--- |
+| **`m5nanoc6_hue_extender_v1.0.0_merged.bin`** | `0x0000` | **Recomendado:** Imagem flash completa (Bootloader + Partições + App). |
+| **`m5nanoc6_hue_extender_v1.0.0.bin`** | `0x10000` | Binário exclusivo do firmware do aplicativo. |
+| **`bootloader.bin`** | `0x0000` | Bootloader de 2º estágio ESP32-C6. |
+| **`partitions.bin`** | `0x8000` | Tabela de partições Zigbee ZCZR 4MB. |
+
+#### Gravando com M5Burner:
+1. Abra o **M5Burner**.
+2. Selecione a aba **NanoC6** e clique em **Custom Burn**.
+3. Escolha `firmware/m5nanoc6_hue_extender_v1.0.0_merged.bin` no endereço `0x0000`.
+4. Clique em **Burn**!
+
 ---
 
 <a id="espanol"></a>
@@ -142,8 +157,15 @@ Emula una **Bombilla de Color RGB + CCT Regulable** (`GLEDOPTO GL-C-008P`) opera
 - 🌐 **Router Zigbee 3.0 Real:** Enruta el tráfico en la capa 802.15.4 y admite hasta 20 dispositivos hijos en la red Hue.
 - 💡 **Emparejamiento Nativo Philips Hue:** Incluye la clave Trust Center ZLL (`81:42:86:86:5D:C1:C8:B2:C8:CB:C5:2E:5D:65:D1:B8`) y `app_device_version = 1`.
 - 🎨 **Soporte Completo RGB + CCT:** Control total de color (espectro CIE 1931 XY) y temperatura de blancos (6500K a 2000K) en el LED WS2812.
-- 🔌 **Accionamiento Grove (GPIO 1 y GPIO 2):** Nivel alto (`HIGH` - 3.3V) cuando la luz está encendida, y `LOW` (0V) quando está apagada.
+- 🔌 **Accionamiento Grove (GPIO 1 y GPIO 2):** Nivel alto (`HIGH` - 3.3V) quando la luz está encendida, y `LOW` (0V) quando está apagada.
 - 🔘 **Botón Multifunción (GPIO 9):** Clic rápido (< 1s) para encender/apagar localmente; 5s para restablecimiento de fábrica.
+
+### 🔥 Binarios Precompilados (v1.0.0)
+Disponibles en la carpeta [`firmware/`](./firmware/):
+| Archivo | Dirección (Offset) | Descripción |
+| :--- | :--- | :--- |
+| **`m5nanoc6_hue_extender_v1.0.0_merged.bin`** | `0x0000` | **Recomendado:** Imagen flash completa (Bootloader + Particiones + App). |
+| **`m5nanoc6_hue_extender_v1.0.0.bin`** | `0x10000` | Binario de la aplicación del firmware. |
 
 ---
 
